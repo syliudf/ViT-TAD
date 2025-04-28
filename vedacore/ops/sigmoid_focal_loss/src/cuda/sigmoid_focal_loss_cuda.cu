@@ -8,12 +8,14 @@
 // cyfu@cs.unc.edu
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
-
-#include <THC/THC.h>
-#include <THC/THCAtomics.cuh>
-#include <THC/THCDeviceUtils.cuh>
+#include <ATen/DeviceGuard.h>
 
 #include <cfloat>
+
+// Helper function to replace THCCeilDiv
+__host__ __device__ inline int CeilDiv(int a, int b) {
+  return (a + b - 1) / b;
+}
 
 // TODO make it in a common file
 #define CUDA_1D_KERNEL_LOOP(i, n)                            \
@@ -112,11 +114,11 @@ at::Tensor SigmoidFocalLoss_forward_cuda(const at::Tensor &logits,
   auto losses_size = num_samples * logits.size(1);
 
   dim3 grid(
-      std::min(THCCeilDiv((int64_t)losses_size, (int64_t)512), (int64_t)4096));
+      std::min((int64_t)CeilDiv((int64_t)losses_size, (int64_t)512), (int64_t)4096));
   dim3 block(512);
 
   if (losses.numel() == 0) {
-    THCudaCheck(cudaGetLastError());
+    C10_CUDA_CHECK(cudaGetLastError());
     return losses;
   }
 
@@ -128,7 +130,7 @@ at::Tensor SigmoidFocalLoss_forward_cuda(const at::Tensor &logits,
                 targets.contiguous().data_ptr<int64_t>(), num_classes, gamma,
                 alpha, num_samples, losses.data_ptr<scalar_t>());
       });
-  THCudaCheck(cudaGetLastError());
+  C10_CUDA_CHECK(cudaGetLastError());
   return losses;
 }
 
@@ -151,12 +153,12 @@ at::Tensor SigmoidFocalLoss_backward_cuda(const at::Tensor &logits,
   auto d_logits = at::zeros({num_samples, num_classes}, logits.options());
   auto d_logits_size = num_samples * logits.size(1);
 
-  dim3 grid(std::min(THCCeilDiv((int64_t)d_logits_size, (int64_t)512),
+  dim3 grid(std::min((int64_t)CeilDiv((int64_t)d_logits_size, (int64_t)512),
                      (int64_t)4096));
   dim3 block(512);
 
   if (d_logits.numel() == 0) {
-    THCudaCheck(cudaGetLastError());
+    C10_CUDA_CHECK(cudaGetLastError());
     return d_logits;
   }
 
@@ -170,6 +172,6 @@ at::Tensor SigmoidFocalLoss_backward_cuda(const at::Tensor &logits,
                 alpha, num_samples, d_logits.data_ptr<scalar_t>());
       });
 
-  THCudaCheck(cudaGetLastError());
+  C10_CUDA_CHECK(cudaGetLastError());
   return d_logits;
 }

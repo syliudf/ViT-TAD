@@ -1,4 +1,4 @@
-avi=`find data/thumos_video_val -name \*.mp4`  #val
+avi=`find data/thumos_video_val/ -name \*.mp4`  #val
 
 for i in $avi; do
   dir=`echo $i | cut -d. -f1`

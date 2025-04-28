@@ -14,7 +14,9 @@ class TrainEngine(BaseEngine):
         self.optimizer = build_optimizer(self.model, optimizer)
 
     def extract_feats(self, img):
-        feats = self.model(img, train=True)
+        # print(f'image:{img}')
+        # print(f'img.shape:{img.data[0].shape}')
+        feats = self.model(img.data.to('cuda'), train=True)
         return feats
 
     def forward(self, data):

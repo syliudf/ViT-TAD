@@ -168,7 +168,7 @@ def focal_loss(input, target, alpha=0.75, gamma=2.0, reduction='none', eps=1e-8)
                 input.shape, input.shape
             )
         )
-
+    input = input.cpu()
     input_soft = F.softmax(input, dim=1) + eps
     target_one_hot = one_hot(target, num_class=input.shape[1])
     weight = torch.pow(-input_soft + 1., gamma)
@@ -450,14 +450,15 @@ def compute_rot_loss(output, target_bin, target_res, mask):
     return loss_bin1 + loss_bin2 + loss_res
 
 class Diou_loss(nn.Module):
-  def __init__(self,eps=1e-6,centerness=True):
+  def __init__(self, eps=1e-6, centerness=True):
         super(Diou_loss, self).__init__()
         self.centerness = centerness
-        self.eps=eps
-  def forward(self,pred, target):
-    """`Implementation of Distance-IoU Loss: Faster and Better
-    Learning for Bounding Box Regression, https://arxiv.org/abs/1911.08287`_.
-    Code is modified from https://github.com/Zzh-tju/DIoU.
+        self.eps = eps
+        
+  def forward(self, pred, target):
+    """Implementation of Distance-IoU Loss: Faster and Better
+    Learning for Bounding Box Regression, https://arxiv.org/abs/1911.08287.
+    
     Args:
         pred (Tensor): Predicted segments of format (start, end),
             shape (n, 2).
@@ -466,6 +467,10 @@ class Diou_loss(nn.Module):
     Return:
         Tensor: Loss tensor.
     """
+    # Ensure both tensors are on the same device
+    device = pred.device
+    target = target.to(device)
+    
     pred_start_offset = pred[:, 0]     # x-start  
     pred_end_offset = pred[:, 1]     # end-x
 
@@ -476,7 +481,7 @@ class Diou_loss(nn.Module):
     target_length = target_start_offset + target_end_offset 
 
     length_intersect = (torch.min(pred_start_offset, target_start_offset)
-                            + torch.min(pred_end_offset, target_end_offset)) 
+                       + torch.min(pred_end_offset, target_end_offset)) 
     length_union = pred_length + target_length - length_intersect + self.eps 
 
     length_circum = (
@@ -484,12 +489,12 @@ class Diou_loss(nn.Module):
         )
     c2 = length_circum**2 + self.eps
 
-    ious=length_intersect/length_union
+    ious = length_intersect/length_union
 
-    pred_start=-pred[:,0]
-    pred_end=pred[:,1]
-    target_start=-target[:,0]
-    target_end=target[:,1]
+    pred_start = -pred[:,0]
+    pred_end = pred[:,1]
+    target_start = -target[:,0]
+    target_end = target[:,1]
     pred_center = (pred_start + pred_end) * 0.5
     target_center = (target_start + target_end) * 0.5
     rho2 = (target_center - pred_center)**2
@@ -684,11 +689,25 @@ class FcosCriterion(BaseCriterion):
 
         act_cls_label_list=[]
         offset_reg_target_list=[]
+        # print(f'video_metas:{video_metas}')  
+        # print(f'gt_segments:{gt_segments}')
+        # print(f'gt_labels:{gt_labels}')
         for ii in range(len(gt_segments)):
+            # print(f'video_metas[{ii}]:{video_metas[ii]}')
             video_length=video_metas[ii]['pad_tsize']
 
-            gt_bboxes=gt_segments[ii].detach().cpu()
-            gt_labels_2=gt_labels[ii].detach().cpu()
+            # Fix: Check if gt_segments[ii] is a tensor before calling detach()
+            if torch.is_tensor(gt_segments[ii]):
+                gt_bboxes=gt_segments[ii].detach().cpu()
+            else:
+                gt_bboxes=gt_segments[ii]
+                
+            # Similarly, check if gt_labels[ii] is a tensor
+            if torch.is_tensor(gt_labels[ii]):
+                gt_labels_2=gt_labels[ii].detach().cpu()
+            else:
+                gt_labels_2=gt_labels[ii]
+            # print(f'gt_bboxes[{ii}]:{gt_bboxes}')
             gt_lengths=gt_bboxes[:, 1] - gt_bboxes[:, 0]
             gt_classes=gt_labels_2
         
@@ -801,7 +820,8 @@ class FcosCriterion(BaseCriterion):
             fpn_act_cls_label = gt_classes[tmp_locations_to_gt_inds] 
             fpn_act_cls_label[tmp_locations_to_min_lengths == INF] = 0 
             is_ignore = np.logical_and((act_cls_label > 0), (fpn_act_cls_label == 0))
-            act_cls_label[is_ignore] = -1
+            # print(f'act_cls_label:{act_cls_label}, is_ignore:{is_ignore}')
+            act_cls_label[is_ignore.bool()] = -1
 
             if self.is_thumos:
             # deal with the 'CliffDiving' and 'Diving' problem

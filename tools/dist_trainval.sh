@@ -13,6 +13,6 @@ PORT="$((29500 + RANDOM % 100))"
 
 export CUDA_VISIBLE_DEVICES=${GPUS}
 
-PYTHONPATH="$(dirname $0)/..":${PYTHONPATH} \
-    NCCL_DEBUG=INFO python -m torch.distributed.launch --nproc_per_node=${NGPUS} --master_port=${PORT} \
-        $(dirname "$0")/trainval.py $CONFIG --launcher pytorch ${@:3}
+PYTHONPATH="$(dirname $0)/..":$PYTHONPATH \
+torchrun --nproc_per_node=$NGPUS --master_port=$PORT \
+    tools/trainval.py $CONFIG --launcher pytorch ${@:3}

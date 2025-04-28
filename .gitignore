@@ -136,3 +136,10 @@ eval_dirs/
 nohup.out
 *.pth
 .idea/
+process.ipynb
+data/thumos/video_8fps
+data/thumos_video_val
+data/thumos_video_test
+data/anet
+requirements
+pretrained

@@ -1,4 +1,4 @@
-avi=`find data/thumos_video_test -name \*.mp4`  #test
+avi=`find data/thumos_video_test/ -name \*.mp4`  #test
 
 for i in $avi; do
   dir=`echo $i | cut -d. -f1`

@@ -292,6 +292,7 @@ class ANET_Dataset(Dataset):
         imgs = []
         for img_id in range(num):
             img_id=int(img_id)
+            print(f'img_id: {img_id}, len_imgfiles: {len(imgfiles)}')
             filename= imgfiles[img_id]
             img_bytes = file_client.get(filename)
             img = image.imfrombytes(img_bytes, flag='color')

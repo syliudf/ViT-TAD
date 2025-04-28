@@ -62,16 +62,114 @@
 
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
-#include <THC/THCAtomics.cuh>
-#include <stdio.h>
-#include <math.h>
-#include <float.h>
+#include <ATen/DeviceGuard.h>
+#include <cuda_runtime.h>
+#include <cuda_fp16.h>
+
+// Custom atomicAdd implementations if needed
+#if !defined(__CUDA_ARCH__) || __CUDA_ARCH__ >= 600
+// atomicAdd for double is already provided in CUDA for compute capability >= 6.0
+#else
+__device__ double atomicAdd(double* address, double val) {
+  unsigned long long int* address_as_ull = (unsigned long long int*)address;
+  unsigned long long int old = *address_as_ull;
+  unsigned long long int assumed;
+  do {
+    assumed = old;
+    old = atomicCAS(address_as_ull, assumed,
+                    __double_as_longlong(val + __longlong_as_double(assumed)));
+  } while (assumed != old);
+  return __longlong_as_double(old);
+}
+#endif
+
+// Define conversion functions for half precision if using older CUDA
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ < 700)
+__device__ __forceinline__ unsigned short __half_as_short(const c10::Half h) {
+    unsigned short bits = 0;
+    memcpy(&bits, &h, sizeof(h));
+    return bits;
+}
+
+__device__ __forceinline__ c10::Half __short_as_half(const unsigned short bits) {
+    c10::Half h;
+    memcpy(&h, &bits, sizeof(h));
+    return h;
+}
+#endif
+
+// For half precision (if needed)
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 700)
+// atomicAdd for half is already provided in CUDA for compute capability >= 7.0
+#else
+// Add custom atomicAdd for half
+__device__ c10::Half atomicAdd(c10::Half* address, c10::Half val) {
+    unsigned int* address_as_ui = (unsigned int*)((char*)address - ((size_t)address & 2));
+    unsigned int old = *address_as_ui;
+    unsigned int assumed;
+    
+    do {
+        assumed = old;
+        unsigned short hsum;
+        if ((size_t)address & 2) {
+            hsum = (old >> 16) + __half_as_short(val);
+            old = (old & 0x0000FFFF) | (hsum << 16);
+        }
+        else {
+            hsum = (old & 0x0000FFFF) + __half_as_short(val);
+            old = (old & 0xFFFF0000) | hsum;
+        }
+        old = atomicCAS(address_as_ui, assumed, old);
+    } while (assumed != old);
+    
+    if ((size_t)address & 2) {
+        return __short_as_half((unsigned short)(old >> 16));
+    }
+    else {
+        return __short_as_half((unsigned short)(old & 0x0000FFFF));
+    }
+}
+#endif
+
+// Add atomicAdd for c10::Half before the main functions
+#ifdef __CUDA_ARCH__
+// atomicAdd implementation for c10::Half type
+__device__ __forceinline__ void atomicAdd(c10::Half* address, c10::Half val) {
+  unsigned int* base_address = reinterpret_cast<unsigned int*>(
+      reinterpret_cast<char*>(address) - (reinterpret_cast<size_t>(address) & 2));
+  unsigned int old = *base_address;
+  unsigned int assumed;
+  unsigned short new_value;
+  unsigned short old_value;
+  do {
+    assumed = old;
+    old_value = static_cast<unsigned short>(
+        reinterpret_cast<size_t>(address) & 2 ? old >> 16 : old & 0xffff);
+    // Convert c10::Half to bits
+    unsigned short val_bits;
+    memcpy(&val_bits, &val, sizeof(val_bits));
+    // Convert bits to float for addition
+    float old_float, val_float;
+    old_float = __half2float(*reinterpret_cast<__half*>(&old_value));
+    val_float = __half2float(*reinterpret_cast<__half*>(&val_bits));
+    // Do addition in float and convert back to half
+    __half sum_half = __float2half(old_float + val_float);
+    memcpy(&new_value, &sum_half, sizeof(new_value));
+    // Update with new value
+    unsigned int new_assumed_base = reinterpret_cast<size_t>(address) & 2
+        ? (assumed & 0xffff) | (static_cast<unsigned int>(new_value) << 16)
+        : (assumed & 0xffff0000) | static_cast<unsigned int>(new_value);
+    old = atomicCAS(base_address, assumed, new_assumed_base);
+  } while (assumed != old);
+}
+#endif
 
 using namespace at;
 
-#define CUDA_KERNEL_LOOP(i, n)                                 \
-  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < (n); \
-       i += blockDim.x * gridDim.x)
+#define CUDA_KERNEL_LOOP(i, n)                          \
+  for (int i = blockIdx.x * blockDim.x + threadIdx.x;   \
+      i < (n);                                          \
+      i += blockDim.x * gridDim.x)
 
 const int CUDA_NUM_THREADS = 1024;
 const int kMaxGridNum = 65535;

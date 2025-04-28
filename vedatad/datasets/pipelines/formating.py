@@ -206,6 +206,7 @@ class DefaultFormatBundle(object):
             if len(imgs.shape) < 4:
                 imgs = np.expand_dims(imgs, -1)
             imgs = np.ascontiguousarray(imgs.transpose(3, 0, 1, 2))
+            # print(f'imgs.shape:{imgs.shape}')
             results["imgs"] = DC(to_tensor(imgs), stack=True, pad_dims=3)
         for key in ["proposals", "gt_segments", "gt_segments_ignore", "gt_labels"]:
             if key not in results:

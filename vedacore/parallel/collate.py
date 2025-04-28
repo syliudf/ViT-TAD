@@ -26,9 +26,16 @@ def collate(batch, samples_per_gpu=1):
     if isinstance(batch[0], DataContainer):
         stacked = []
         if batch[0].cpu_only:
+            # print(f'batch:{batch}')
             for i in range(0, len(batch), samples_per_gpu):
-                stacked.append(
+                # if isinstance(batch[0].data, dict) and any(key == 'video_metas' for key in batch[0].data):
+                #     # Special handling for video_metas dictionary to avoid nested lists
+                #     stacked.extend([sample.data for sample in batch[i:i + samples_per_gpu]])
+                    
+                # else:
+                stacked.extend(
                     [sample.data for sample in batch[i:i + samples_per_gpu]])
+                # print(f'stacked: {stacked}')
             return DataContainer(
                 stacked, batch[0].stack, batch[0].padding_value, cpu_only=True)
         elif batch[0].stack:
@@ -56,20 +63,26 @@ def collate(batch, samples_per_gpu=1):
                         padded_samples.append(
                             F.pad(
                                 sample.data, pad, value=sample.padding_value))
-                    stacked.append(default_collate(padded_samples))
+                    stacked_tensor = default_collate(padded_samples)
+                    stacked.append(stacked_tensor)
                 elif batch[i].pad_dims is None:
-                    stacked.append(
-                        default_collate([
-                            sample.data
-                            for sample in batch[i:i + samples_per_gpu]
-                        ]))
+                    stacked_tensor = default_collate([
+                        sample.data
+                        for sample in batch[i:i + samples_per_gpu]
+                    ])
+                    stacked.append(stacked_tensor)
                 else:
                     raise ValueError(
                         'pad_dims should be either None or integers (1-3)')
-
+            
+            # Return the stacked tensors directly, not inside a list
+            if len(stacked) == 1:
+                return DataContainer(stacked[0], batch[0].stack, batch[0].padding_value)
+            else:
+                return DataContainer(torch.cat(stacked, dim=0), batch[0].stack, batch[0].padding_value)
         else:
             for i in range(0, len(batch), samples_per_gpu):
-                stacked.append(
+                stacked.extend(
                     [sample.data for sample in batch[i:i + samples_per_gpu]])
         return DataContainer(stacked, batch[0].stack, batch[0].padding_value)
     elif isinstance(batch[0], Sequence):

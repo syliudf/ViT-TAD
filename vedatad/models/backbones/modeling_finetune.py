@@ -466,6 +466,7 @@ class VisionTransformer(nn.Module):
         self.num_classes = num_classes
 
     def forward_features(self, x):
+        # print(x.data.shape)
         t = int(x.shape[-3] / 2) 
         h = int(x.shape[-2] / 16)
         w = int(x.shape[-1] / 16) 

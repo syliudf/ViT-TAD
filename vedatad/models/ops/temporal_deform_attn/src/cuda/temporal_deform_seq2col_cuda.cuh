@@ -20,7 +20,64 @@
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
 
-#include <THC/THCAtomics.cuh>
+// Remove deprecated THCAtomics.cuh
+// #include <THC/THCAtomics.cuh>
+
+// Custom atomicAdd implementations if needed
+#if !defined(__CUDA_ARCH__) || __CUDA_ARCH__ >= 600
+// atomicAdd for double is already provided in CUDA for compute capability >= 6.0
+#else
+__device__ double atomicAdd(double* address, double val) {
+  unsigned long long int* address_as_ull = (unsigned long long int*)address;
+  unsigned long long int old = *address_as_ull;
+  unsigned long long int assumed;
+  do {
+    assumed = old;
+    old = atomicCAS(address_as_ull, assumed,
+                    __double_as_longlong(val + __longlong_as_double(assumed)));
+  } while (assumed != old);
+  return __longlong_as_double(old);
+}
+#endif
+
+// For half precision support if needed
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 700)
+// atomicAdd for half is already provided in CUDA for compute capability >= 7.0
+#elif defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 600)
+// Use intrinsics for compute capability 6.x
+#include <cuda_fp16.h>
+__device__ __half atomicAdd(__half* address, __half val) {
+  unsigned int* address_as_ui = (unsigned int*)((char*)address - ((size_t)address & 2));
+  unsigned int old = *address_as_ui;
+  unsigned int assumed;
+  
+  do {
+    assumed = old;
+    unsigned int old_as_ui = assumed;
+    __half_raw assumed_bits;
+    
+    if ((size_t)address & 2) {
+      assumed_bits.x = (old_as_ui >> 16);
+      old_as_ui = (old_as_ui & 0xFFFF) | (((unsigned int)__half_as_short(__half_raw{__half_as_short(__half_raw{assumed_bits.x}) + __half_as_short(__half_raw{__half_as_short(val)})})) << 16);
+    } else {
+      assumed_bits.x = (old_as_ui & 0xFFFF);
+      old_as_ui = (old_as_ui & 0xFFFF0000) | ((unsigned int)__half_as_short(__half_raw{__half_as_short(__half_raw{assumed_bits.x}) + __half_as_short(__half_raw{__half_as_short(val)})}));
+    }
+    
+    old = atomicCAS(address_as_ui, assumed, old_as_ui);
+  } while (assumed != old);
+  
+  __half_raw old_bits;
+  
+  if ((size_t)address & 2) {
+    old_bits.x = (old >> 16);
+  } else {
+    old_bits.x = (old & 0xFFFF);
+  }
+  
+  return __half_raw{old_bits.x};
+}
+#endif
 
 #define CUDA_KERNEL_LOOP(i, n)                          \
   for (int i = blockIdx.x * blockDim.x + threadIdx.x;   \

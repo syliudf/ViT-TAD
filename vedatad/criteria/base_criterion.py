@@ -46,6 +46,11 @@ class BaseCriterion(metaclass=ABCMeta):
             # reduce loss when distributed training
             if dist.is_available() and dist.is_initialized():
                 loss_value = loss_value.data.clone()
+                # Get the device of the current process group
+                if torch.cuda.is_available():
+                    device = torch.device('cuda')
+                    # Move tensor to the same device as the process group
+                    loss_value = loss_value.to(device)
                 dist.all_reduce(loss_value.div_(dist.get_world_size()))
             log_vars[loss_name] = loss_value.item()
 

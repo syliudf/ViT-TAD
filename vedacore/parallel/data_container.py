@@ -53,6 +53,18 @@ class DataContainer:
     def __len__(self):
         return len(self._data)
 
+    def __getitem__(self, item):
+        """Enable subscription of the data container."""
+        return self.data[item]
+
+    def __setitem__(self, key, value):
+        """Enable setting values using subscription."""
+        self._data[key] = value
+
+    def __iter__(self):
+        """Enable iteration over the data container."""
+        return iter(self.data)
+
     @property
     def data(self):
         return self._data
@@ -79,6 +91,17 @@ class DataContainer:
     @property
     def pad_dims(self):
         return self._pad_dims
+        
+    @property
+    def shape(self):
+        if isinstance(self.data, torch.Tensor):
+            return self.data.shape
+        elif isinstance(self.data, list):
+            # For lists, return a tuple with the list length
+            return (len(self.data),)
+        else:
+            raise AttributeError(
+                f'{self.__class__.__name__} has no attribute shape for type {self.datatype}')
 
     @assert_tensor_type
     def size(self, *args, **kwargs):

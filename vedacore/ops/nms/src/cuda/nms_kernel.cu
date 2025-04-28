@@ -3,13 +3,19 @@
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/DeviceGuard.h>
 
-#include <THC/THC.h>
-#include <THC/THCDeviceUtils.cuh>
+// Remove THC includes as they're deprecated
+// #include <THC/THC.h>
+// #include <THC/THCDeviceUtils.cuh>
 
 #include <vector>
 #include <iostream>
 
 int const threadsPerBlock = sizeof(unsigned long long) * 8;
+
+// Helper function to replace THCCeilDiv
+__host__ __device__ inline int CeilDiv(int a, int b) {
+  return (a + b - 1) / b;
+}
 
 __device__ inline float devIoU(float const * const a, float const * const b) {
   float left = max(a[0], b[0]), right = min(a[1], b[1]);
@@ -56,7 +62,7 @@ __global__ void nms_kernel(const int n_segments, const float nms_overlap_thresh,
         t |= 1ULL << i;
       }
     }
-    const int col_blocks = THCCeilDiv(n_segments, threadsPerBlock);
+    const int col_blocks = CeilDiv(n_segments, threadsPerBlock);
     dev_mask[cur_segment_idx * col_blocks + col_start] = t;
   }
 }
@@ -75,20 +81,16 @@ at::Tensor nms_cuda_forward(const at::Tensor segments, float nms_overlap_thresh)
 
   int segments_num = segments.size(0);
 
-  const int col_blocks = THCCeilDiv(segments_num, threadsPerBlock);
+  const int col_blocks = CeilDiv(segments_num, threadsPerBlock);
 
   scalar_t* segments_dev = segments_sorted.data_ptr<scalar_t>();
 
-  THCState *state = at::globalContext().lazyInitCUDA(); // TODO replace with getTHCState
+  unsigned long long* mask_dev = nullptr;
+  C10_CUDA_CHECK(cudaMalloc(&mask_dev,
+                        segments_num * col_blocks * sizeof(unsigned long long)));
 
-  unsigned long long* mask_dev = NULL;
-  //THCudaCheck(THCudaMalloc(state, (void**) &mask_dev,
-  //                      segments_num * col_blocks * sizeof(unsigned long long)));
-
-  mask_dev = (unsigned long long*) THCudaMalloc(state, segments_num * col_blocks * sizeof(unsigned long long));
-
-  dim3 blocks(THCCeilDiv(segments_num, threadsPerBlock),
-              THCCeilDiv(segments_num, threadsPerBlock));
+  dim3 blocks(CeilDiv(segments_num, threadsPerBlock),
+              CeilDiv(segments_num, threadsPerBlock));
   dim3 threads(threadsPerBlock);
   nms_kernel<<<blocks, threads, 0, at::cuda::getCurrentCUDAStream()>>>(segments_num,
                                   nms_overlap_thresh,
@@ -96,7 +98,7 @@ at::Tensor nms_cuda_forward(const at::Tensor segments, float nms_overlap_thresh)
                                   mask_dev);
 
   std::vector<unsigned long long> mask_host(segments_num * col_blocks);
-  THCudaCheck(cudaMemcpyAsync(
+  C10_CUDA_CHECK(cudaMemcpyAsync(
 			  &mask_host[0],
 			  mask_dev,
 			  sizeof(unsigned long long) * segments_num * col_blocks,
@@ -124,7 +126,8 @@ at::Tensor nms_cuda_forward(const at::Tensor segments, float nms_overlap_thresh)
     }
   }
 
-  THCudaFree(state, mask_dev);
+  // Replace c10::cuda::CUDACachingAllocator::raw_delete with cudaFree
+  C10_CUDA_CHECK(cudaFree(mask_dev));
   // TODO improve this part
   return order_t.index({
       keep.narrow(/*dim=*/0, /*start=*/0, /*length=*/num_to_keep).to(
